@@ -1,0 +1,16 @@
+🚨 API QUOTA EXCEEDED - QUICK FIX 🚨
+
+Your current API key has run out of free quota.
+
+IMMEDIATE FIX:
+1. Go to: https://aistudio.google.com/app/apikey
+2. Click "Create API Key"
+3. Copy the new key
+4. Open .env file in this project
+5. Replace old key with new key:
+   VITE_GEMINI_API_KEY=your_new_key_here
+6. Restart server: npm run dev
+
+That's it! Your app will work again.
+
+For detailed instructions, see: API_KEY_SETUP.md

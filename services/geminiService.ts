@@ -123,12 +123,40 @@ export const sendMessageToGemini = async (
   try {
     const systemInstruction = buildEnhancedSystemInstruction();
 
+    // Use gemini-2.0-flash which is available and stable
     const preferredModel =
-      localStorage.getItem("calmmind_preferred_model") || "gemini-1.5-flash";
+      localStorage.getItem("calmmind_preferred_model") || "gemini-2.0-flash";
 
     const model = ai.getGenerativeModel({
       model: preferredModel,
-      systemInstruction: systemInstruction,
+    });
+
+    // Build full prompt with system instruction and context
+    let fullPrompt = systemInstruction + "\n\n";
+
+    if (moodJustChanged && Math.abs(currentMoodScore - lastMoodScore) >= 2) {
+      const direction =
+        currentMoodScore > lastMoodScore ? "increased" : "decreased";
+      const indicator = currentMoodScore > lastMoodScore ? "📈" : "📉";
+      fullPrompt += `${indicator} [User just adjusted their mood slider from ${lastMoodScore}/10 to ${currentMoodScore}/10 - mood ${direction}]\n\n`;
+    }
+
+    if (conversationHistory.length > 0) {
+      const recentMessages = conversationHistory.slice(-5);
+      const contextParts = recentMessages.map((msg) => {
+        const role = msg.sender === "user" ? "User" : "Assistant";
+        return `${role}: ${msg.text.substring(0, 150)}${msg.text.length > 150 ? "..." : ""}`;
+      });
+
+      if (contextParts.length > 0) {
+        fullPrompt += `Recent conversation:\n${contextParts.join("\n")}\n\n`;
+      }
+    }
+
+    fullPrompt += `User's message: ${message}`;
+
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
       generationConfig: {
         temperature: 0.7,
         topP: 0.9,
@@ -136,37 +164,6 @@ export const sendMessageToGemini = async (
         maxOutputTokens: 2048,
       },
     });
-
-    let contextualMessage = message;
-
-    if (moodJustChanged && Math.abs(currentMoodScore - lastMoodScore) >= 2) {
-      const direction =
-        currentMoodScore > lastMoodScore ? "increased" : "decreased";
-      const indicator = currentMoodScore > lastMoodScore ? "📈" : "📉";
-      contextualMessage = `${indicator} [I just adjusted my mood slider from ${lastMoodScore}/10 to ${currentMoodScore}/10 - mood ${direction}]\n\n${message}`;
-    }
-
-    if (conversationHistory.length > 0) {
-      const recentMessages = conversationHistory.slice(-5);
-      const contextParts = recentMessages.map((msg) => {
-        const role = msg.sender === "user" ? "Me" : "You";
-        const time = msg.timestamp.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-        return `[${time}] ${role}: ${msg.text.substring(0, 100)}${msg.text.length > 100 ? "..." : ""}`;
-      });
-
-      if (contextParts.length > 0) {
-        contextualMessage = `${contextualMessage}
-
-[Context from our recent conversation:
-${contextParts.join("\n")}
-]`;
-      }
-    }
-
-    const result = await model.generateContent(contextualMessage);
     const response = await result.response;
     const text = response.text();
 
@@ -174,18 +171,55 @@ ${contextParts.join("\n")}
   } catch (error: any) {
     console.error("Gemini Error:", error);
 
-    if (error.message?.includes("API key")) {
-      return "⚠️ There's an issue with the API key. Please check your .env configuration.";
-    } else if (
-      error.message?.includes("network") ||
-      error.message?.includes("fetch")
+    // Check for quota/rate limit errors
+    if (
+      error.message?.includes("quota") ||
+      error.message?.includes("429") ||
+      error.message?.includes("RESOURCE_EXHAUSTED") ||
+      error.status === 429
     ) {
-      return "⚠️ Network connection issue. Please check your internet connection and try again.";
-    } else if (error.message?.includes("timeout")) {
+      return `⚠️ **API Quota Exceeded**
+
+Your Google Gemini API key has run out of free quota. Here's how to fix this:
+
+1. **Get a new API key** at https://aistudio.google.com/app/apikey
+2. Update your \`.env\` file with the new key
+3. Restart the dev server (\`npm run dev\`)
+
+**Why this happens:** Free tier has limited requests per minute/day.
+
+**Alternative:** Consider upgrading to a paid plan for unlimited access.`;
+    }
+
+    if (
+      error.message?.includes("API key") ||
+      error.message?.includes("API_KEY_INVALID")
+    ) {
+      return "⚠️ **Invalid API Key**\n\nYour API key is invalid or not configured. Please:\n1. Check your `.env` file\n2. Get a valid key from https://aistudio.google.com/app/apikey\n3. Restart the server";
+    }
+
+    if (
+      error.message?.includes("network") ||
+      error.message?.includes("fetch") ||
+      error.message?.includes("Failed to fetch")
+    ) {
+      return "⚠️ **Network Connection Issue**\n\nPlease check:\n1. Your internet connection\n2. Firewall settings\n3. Try refreshing the page";
+    }
+
+    if (error.message?.includes("timeout")) {
       return "⏱️ The request timed out. Please try again with a shorter message.";
     }
 
-    return `⚠️ I'm having difficulty responding right now. Error: ${error.message || "Unknown error"}. Please try again in a moment.`;
+    // Generic error with helpful context
+    return `⚠️ **Error Connecting to AI**
+
+${error.message || "Unknown error occurred"}
+
+**Troubleshooting:**
+- Check your internet connection
+- Verify API key in \`.env\` file
+- Try refreshing the page
+- Check console for more details`;
   }
 };
 
